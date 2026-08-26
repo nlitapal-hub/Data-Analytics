@@ -1,0 +1,143 @@
+SELECT count(*) FROM world_layoffs.layoffs;
+
+-- Data Cleaning Procedures
+-- 1. Remove Duplicated
+-- 2.Standardize the data
+-- 3. NULL values validation
+-- 4. Remove any columns
+
+-- creating a staging table to prevent the raw_data overwrite
+
+create table layoffs_staging 
+like layoffs;
+
+select * from layoffs_staging;
+
+insert into layoffs_staging
+select * from layoffs;
+
+-- Cleaning data
+
+-- identifying duplicates to identify the duplicates we need to partition by the columns that we think will be unique like in the data location can repeat, but company and industry repeating together would be a good flag.
+
+-- we will first create the window function to partition by such columns and then work with that as a CTE.alter
+
+select *, 
+row_number() over(partition by company,industry,total_laid_off,`date`,funds_raised_millions) as row_num
+from layoffs_staging;
+
+with cte_layoff as 
+(select *, 
+row_number() over(partition by company,industry,total_laid_off,`date`,funds_raised_millions) as row_num
+from layoffs_staging
+)
+select * from cte_layoff where row_num>1;
+
+select * from layoffs_staging where company like '%Casper%';
+select * from layoffs_staging where company like '%Cazoo%';
+select * from layoffs_staging where company like '%Hibob%';
+select * from layoffs_staging where company like '%Wildlife Studios%';
+select * from layoffs_staging where company like '%Yahoo%';
+
+
+-- cleaning up process
+-- we cannot update a table using CTEs
+
+-- we will create another staging table
+
+CREATE TABLE `layoffs_staging2` (
+  `company` text,
+  `location` text,
+  `industry` text,
+  `total_laid_off` int DEFAULT NULL,
+  `percentage_laid_off` text,
+  `date` text,
+  `stage` text,
+  `country` text,
+  `funds_raised_millions` int DEFAULT NULL,
+  `row_numb` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+select * from layoffs_staging2;
+
+insert into layoffs_staging2 
+(select *, 
+row_number() over(partition by company,industry,total_laid_off,`date`,funds_raised_millions) as row_num
+from layoffs_staging); 
+
+select * from layoffs_staging2 where row_numb>1;
+
+delete from layoffs_staging2 where row_numb > 1;
+
+select * from layoffs_staging2;
+
+-- data cleaning completed
+
+-- standardization of data 
+-- it means we have to format the data to make it uniform.
+-- 1. Clear white spaces.
+-- 2. clear slightly different named duplicates
+-- 3. clear redundant data at the end of each field.
+-- 4.Standardize the date time fields
+
+
+select distinct company from layoffs_staging2;
+select company,trim(company) from layoffs_staging2;
+
+update layoffs_staging2 set company=trim(company);
+
+select distinct(industry)
+from layoffs_staging2 order by 1;
+
+select * from layoffs_staging2 where industry like 'Crypto%';
+
+update layoffs_staging2 set industry='Crypto' where industry like 'Crypto%';
+
+
+select distinct country from layoffs_staging2 order by 1 ;
+
+select *,country, trim(trailing '.' from country) from layoffs_staging2 where country like 'United States%';
+
+update layoffs_staging2 set country = trim(trailing '.' from country) where country like 'United States%';
+
+alter table layoffs_staging2 modify column `date` date; -- this gives an error as the data in the field is not in the correct format
+
+
+select `date`  from layoffs_staging2;
+
+
+update layoffs_staging2 set `date`=str_to_date(`date`,'%m/%d/%Y');
+
+alter table layoffs_staging2 modify column `date` date;
+
+-- NULLS amd Blanks
+
+select * from layoffs_staging2; 
+
+select distinct(industry) from layoffs_staging2;
+
+select * from layoffs_staging2 where industry is null or industry='';
+select * from layoffs_staging2 where company = 'Airbnb';
+select * from layoffs_staging where company = 'Bally''s Interactive';
+
+select * from layoffs_staging2 as t1
+join layoffs_staging2 as t2
+on t1.company=t2.company
+and t1.location=t2.location 
+where (t1.industry is null or t1.industry='')
+and t2.industry is not null ;
+
+update layoffs_staging2 as t1 join layoffs_staging2 as t2
+on t1.company=t2.company
+and t1.location=t2.location  set t1.industry=t2.industry
+where (t1.industry is null or t1.industry='')
+and t2.industry is not null and t2.industry <> '';
+
+-- an effective solution here would be to update the blank values with the null values and use the update query
+
+select * from layoffs_staging2 where total_laid_off is null and percentage_laid_off is null;
+
+delete from layoffs_staging2 where total_laid_off is null and percentage_laid_off is null;
+
+alter table layoffs_staging2 drop column row_numb;
+
